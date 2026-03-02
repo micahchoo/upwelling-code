@@ -12,6 +12,8 @@ export class RealTimeUpwell extends RTC<WebsocketSyncMessage> {
     super(upwell.id, upwell.metadata.doc, author)
     this.upwell = upwell
     this.on('syncMessage', ({ opIds, heads }) => {
+      // Update the metadata doc reference
+      this.upwell.metadata.doc = this.doc
       if (opIds.length) {
         log('triggering data event')
         this.emit('data', { opIds, heads })

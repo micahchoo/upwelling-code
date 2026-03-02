@@ -1,23 +1,14 @@
 import { nanoid } from 'nanoid'
-import init, {
-  Automerge,
-  load,
-  create,
-  Value,
-  Heads,
-} from 'automerge-wasm-pack'
+import * as Automerge from '@automerge/automerge'
 import { Upwell, Author, AuthorId } from './Upwell'
 import { Comments, createAuthorId, CommentState } from '.'
+import { CollectionHost } from './Collection'
+import { DraftDoc, Heads } from './types'
 
+// No-op: the new @automerge/automerge auto-initializes WASM
 export async function loadForTheFirstTimeLoL() {
-  return new Promise<void>((resolve, reject) => {
-    init().then(() => {
-      resolve()
-    })
-  })
+  return Promise.resolve()
 }
-
-const ROOT = '_root'
 
 export type ChangeMetadata = {
   message: string
@@ -53,41 +44,55 @@ export class LazyDraft {
   }
 
   hydrate() {
-    return new Draft(this.id, load(this.binary))
+    return new Draft(this.id, Automerge.load<DraftDoc>(this.binary))
   }
 }
 
-export class Draft {
+export class Draft implements CollectionHost {
   id: string
-  doc: Automerge
+  doc: Automerge.Doc<DraftDoc>
   comments: Comments
   _heads?: Heads = []
   _textCache?: string
   subscriber: Subscriber = () => {}
 
-  constructor(id: string, doc: Automerge, heads?: Heads) {
+  constructor(id: string, doc: Automerge.Doc<DraftDoc>, heads?: Heads) {
     this.id = id
     this.doc = doc
-    this.comments = new Comments(doc, 'comments')
+    this.comments = new Comments(this, 'comments')
     this._heads = heads
   }
 
+  // CollectionHost interface: allows Collection/Comments to update our doc
+  updateDoc(doc: Automerge.Doc<any>): void {
+    this.doc = doc
+  }
+
+  private _view(): DraftDoc {
+    if (this._heads && this._heads.length > 0) {
+      return Automerge.view(this.doc, this._heads)
+    }
+    return this.doc
+  }
+
   private _getAutomergeText(prop: string): string {
-    let value = this.doc.get(ROOT, prop, this._heads)
-    if (value && value[0] === 'text') {
-      return this.doc.text(value[1], this._heads)
-    } else return ''
+    let view = this._view()
+    return (view as any)[prop] || ''
   }
 
   _getValue(prop: string, heads?: string[]) {
-    let value = this.doc.get(ROOT, prop, heads || this._heads)
-    if (value && value[0]) return value[1]
+    if (heads && heads.length > 0) {
+      let view = Automerge.view(this.doc, heads as Heads)
+      return (view as any)[prop]
+    }
+    let view = this._view()
+    return (view as any)[prop]
   }
 
   get initialHeads() {
     let initialHeads = this._getValue('initialHeads') as string
     if (initialHeads) return initialHeads.split(',')
-    else return this.doc.getHeads()
+    else return Automerge.getHeads(this.doc)
   }
 
   get shared() {
@@ -95,12 +100,15 @@ export class Draft {
   }
 
   get contributors(): string[] {
-    let contribMap = this.doc.materialize('/contributors')
+    let contribMap = this._view().contributors
+    if (!contribMap) return []
     return Object.keys(contribMap)
   }
 
   set shared(value: boolean) {
-    this.doc.put(ROOT, 'shared', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.shared = value
+    })
   }
 
   get created_at(): number {
@@ -108,7 +116,9 @@ export class Draft {
   }
 
   set created_at(value: number) {
-    this.doc.put(ROOT, 'time', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.time = value
+    })
   }
 
   get edited_at(): number {
@@ -116,7 +126,9 @@ export class Draft {
   }
 
   set edited_at(value: number) {
-    this.doc.put(ROOT, 'edited_at', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.edited_at = value
+    })
   }
 
   get merged_at(): number {
@@ -124,7 +136,9 @@ export class Draft {
   }
 
   set merged_at(value: number) {
-    this.doc.put(ROOT, 'merged_at', value)
+    this.doc = Automerge.change(this.doc, d => {
+      (d as any).merged_at = value
+    })
   }
 
   get message(): string {
@@ -135,7 +149,9 @@ export class Draft {
   }
 
   set message(value: string) {
-    this.doc.put(ROOT, 'message', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.message = value
+    })
   }
 
   get text(): string {
@@ -147,7 +163,9 @@ export class Draft {
   }
 
   set title(value: string) {
-    this.doc.put(ROOT, 'title', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.title = value
+    })
   }
 
   get title(): string {
@@ -159,7 +177,9 @@ export class Draft {
   }
 
   set parent_id(value: string) {
-    this.doc.put(ROOT, 'parent_id', value)
+    this.doc = Automerge.change(this.doc, d => {
+      d.parent_id = value
+    })
   }
 
   subscribe(subscriber: Subscriber) {
@@ -167,7 +187,7 @@ export class Draft {
   }
 
   checkout(heads: Heads) {
-    return new Draft(this.id, this.doc.clone(), heads)
+    return new Draft(this.id, Automerge.clone(this.doc), heads)
   }
 
   materialize(heads?: Heads): DraftMetadata {
@@ -178,7 +198,7 @@ export class Draft {
     return {
       id: this.id,
       title: this.title,
-      heads: heads || this.doc.getHeads(),
+      heads: heads || Automerge.getHeads(this.doc),
       initialHeads: this.initialHeads,
       parent_id: this.parent_id,
       text: this.text,
@@ -195,43 +215,42 @@ export class Draft {
   }
 
   insertAt(position: number, value: string | Array<string>, prop = 'text') {
-    let obj = this.doc.get(ROOT, prop)
-    if (obj && obj[0] === 'text') {
-      delete this._textCache
-      return this.doc.splice(obj[1], position, 0, value)
-    } else throw new Error('Text field not properly initialized')
+    delete this._textCache
+    let text = typeof value === 'string' ? value : value.join('')
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.splice(d, [prop], position, 0, text)
+    })
   }
 
   insertBlock(position: number, type: string, attributes: any = {}) {
-    let text = this.doc.get(ROOT, 'text')
-    let block = { type }
-    // This is a weird hack and I don't really understand why setting
-    // sub-objects doesn't work in automerge
+    delete this._textCache
+    let block: any = { type }
     Object.keys(attributes).forEach((key) => {
       block[`attribute-${key}`] = attributes[key]
     })
-    if (text && text[0] === 'text') {
-      delete this._textCache
-      let obj = this.doc.insertObject(text[1], position, block)
-    } else throw new Error('text not properly initialized')
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.splitBlock(d, ['text'], position, block)
+    })
   }
 
   getBlock(position: number) {
-    let text = this.doc.get(ROOT, 'text')
-    if (!text || text[0] !== 'text')
-      throw new Error('text not properly initialized')
-    let blockObj = this.doc.get(text[1], position)
-    if (blockObj && blockObj[0] === 'map') {
-      let block = this.doc.materialize(blockObj[1])
-      block.attributes = {}
-      for (let attr of Object.keys(block)) {
-        if (attr.indexOf('attribute-') === 0) {
-          block.attributes[attr.substring(10)] = block[attr]
-          delete block[attr]
+    try {
+      let block = Automerge.block(this.doc, ['text'], position)
+      if (block) {
+        let result: any = { ...block }
+        result.attributes = {}
+        for (let attr of Object.keys(result)) {
+          if (attr.indexOf('attribute-') === 0) {
+            result.attributes[attr.substring(10)] = result[attr]
+            delete result[attr]
+          }
         }
+        return result
       }
-      return block
+    } catch (e) {
+      return undefined
     }
+    return undefined
   }
 
   setBlock(position: number, type: string, attributes: any) {
@@ -239,9 +258,14 @@ export class Draft {
       throw new Error(
         `unable to modify block, position ${position} is not a block!`
       )
-    this.deleteAt(position, 1)
     delete this._textCache
-    this.insertBlock(position, type, attributes)
+    this.doc = Automerge.change(this.doc, d => {
+      let block: any = { type }
+      Object.keys(attributes || {}).forEach((key) => {
+        block[`attribute-${key}`] = attributes[key]
+      })
+      Automerge.updateBlock(d, ['text'], position, block)
+    })
   }
 
   insertComment(
@@ -255,55 +279,63 @@ export class Draft {
       id: comment_id,
       author: authorId,
       message,
-      children: [],
+      children: [] as string[],
       state: CommentState.OPEN,
     }
 
     this.comments.insert(comment)
-
     this.mark('comment', `[${from}..${to}]`, comment_id)
 
     return comment_id
   }
 
   deleteAt(position: number, count: number = 1, prop = 'text') {
-    let obj = this.doc.get(ROOT, prop)
-    if (obj && obj[0] === 'text') {
-      delete this._textCache
-      return this.doc.splice(obj[1], position, count, '')
-    } else throw new Error('Text field not properly initialized')
+    delete this._textCache
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.splice(d, [prop], position, count)
+    })
   }
 
-  mark(name: string, range: string, value: Value, prop = 'text') {
-    let obj = this.doc.get(ROOT, prop)
-    if (obj && obj[0] === 'text')
-      return this.doc.mark(obj[1], range, name, value)
-    else throw new Error('Text field not properly initialized')
+  mark(name: string, range: string, value: any, prop = 'text') {
+    // Parse range like "[3..8]" or "(3..8)"
+    let match = range.match(/([[(])(\d+)\.\.(\d+)([\])])/)
+    if (!match) throw new Error('Invalid range: ' + range)
+    let start = parseInt(match[2])
+    let end = parseInt(match[3])
+    // '(' means expand, '[' means don't expand
+    let expand = match[1] === '(' ? 'after' as const : 'none' as const
+
+    this.doc = Automerge.change(this.doc, d => {
+      Automerge.mark(d, [prop], { start, end, expand }, name, value)
+    })
   }
 
   getMarks(prop = 'text') {
-    let obj = this.doc.get(ROOT, 'text')
-    if (!obj || obj[0] !== 'text')
-      throw new Error('Text field not properly initialized')
+    let marks = Automerge.marks(this.doc, [prop])
+    // Convert from new format {name, value, start, end} to old format {type, value, start, end, id}
+    let filteredSpans: any[] = []
 
-    let rawSpans = this.doc.raw_spans(obj[1])
-    let spanCollector = {
+    let spanCollector: any = {
       strong: new Array(this.text.length).fill(false, 0, this.text.length),
       italic: new Array(this.text.length).fill(false, 0, this.text.length),
     }
-    let spanActors = {
+    let spanActors: any = {
       strong: new Array(this.text.length),
       italic: new Array(this.text.length),
     }
 
-    let filteredSpans: any[] = []
-    for (let span of rawSpans) {
-      if (!spanCollector[span.type]) {
+    for (let mark of marks) {
+      let span: any = {
+        type: mark.name,
+        value: mark.value,
+        start: mark.start,
+        end: mark.end,
+      }
+      if (!spanCollector[mark.name]) {
         filteredSpans.push(span)
         continue
       }
-      spanCollector[span.type].fill(span.value, span.start, span.end)
-      spanActors[span.type].fill(span.id, span.start, span.end)
+      spanCollector[mark.name].fill(mark.value, mark.start, mark.end)
     }
 
     for (let type of Object.keys(spanCollector)) {
@@ -319,7 +351,6 @@ export class Draft {
           end,
           type,
           value: true,
-          id: spanActors[type][start],
         })
         idx = end + 1
       }
@@ -332,31 +363,23 @@ export class Draft {
     return this.getMarks()
   }
 
-  // TODO refactor this to use materialize or whatever because there is some
-  // nasty hoop-jumping here.
   get blocks() {
     let blocks: any[] = []
-
-    let i = this.text.indexOf('\uFFFC')
+    let text = this.text
+    let i = text.indexOf('\uFFFC')
 
     // If we have an empty document, insert a paragraph to get started.
     if (i === -1) {
       this.insertBlock(0, 'paragraph')
-      i = this.text.indexOf('\uFFFC')
+      text = this.text
+      i = text.indexOf('\uFFFC')
     }
 
-    while (i !== this.text.length) {
-      // don't include the block replacement character, since it's just a marker
-      // that the paragraph follows
+    while (i !== text.length) {
       let start = i + 1
+      let end = text.indexOf('\uFFFC', i + 1)
+      if (end === -1) end = text.length
 
-      // find the next block replacement character; this will be the end of our
-      // block (if there isn't a next block, this block ends at the end of the
-      // text
-      let end = this.text.indexOf('\uFFFC', i + 1)
-      if (end === -1) end = this.text.length
-
-      // get the attributes for this block
       let attrs = this.getBlock(i)
       if (!attrs)
         throw new Error(`unable to retrieve block information at position ${i}`)
@@ -369,39 +392,46 @@ export class Draft {
   }
 
   save(): Uint8Array {
-    return this.doc.save()
+    return Automerge.save(this.doc)
   }
 
   fork(message: string, author: Author): Draft {
     let id = nanoid()
-    let doc = this.doc.fork(Draft.getActorId(author.id))
-    doc.put(ROOT, 'initialHeads', this.doc.getHeads().join(','))
-    doc.put(ROOT, 'message', message)
-    let authorId = author.id.toString()
-    doc.put(ROOT, 'author', authorId)
-    doc.put(ROOT, 'shared', false)
-    doc.put(ROOT, 'time', Date.now())
-    doc.put(ROOT, 'merged_at', false)
-    doc.put(ROOT, 'edited_at', Date.now())
-    doc.put(ROOT, 'archived', false)
-    doc.putObject(ROOT, 'comments', {})
-    doc.putObject(ROOT, 'contributors', {})
-    doc.put(ROOT, 'parent_id', this.id)
+    let doc = Automerge.clone(this.doc, { actor: Draft.getActorId(author.id) })
+    doc = Automerge.change(doc, d => {
+      d.initialHeads = Automerge.getHeads(this.doc).join(',')
+      d.message = message
+      d.author = author.id.toString()
+      d.shared = false
+      d.time = Date.now()
+      ;(d as any).merged_at = false
+      d.edited_at = Date.now()
+      d.archived = false
+      d.comments = {} as any
+      d.contributors = {} as any
+      d.parent_id = this.id
+    })
     let draft = new Draft(id, doc)
-    draft.addContributor(authorId)
+    draft.addContributor(author.id.toString())
     return draft
   }
 
   addContributor(authorId: AuthorId) {
-    let exists = this.doc.get('/contributors', authorId)
-    if (exists && exists[0] === 'boolean' && exists[1] === true) return
-    this.doc.put('/contributors', authorId, true)
+    let contribs = this.doc.contributors
+    if (contribs && contribs[authorId] === true) return
+    this.doc = Automerge.change(this.doc, d => {
+      d.contributors[authorId] = true
+    })
   }
 
   merge(theirs: Draft): string[] {
-    let opIds = this.doc.merge(theirs.doc)
+    let beforeHeads = Automerge.getHeads(this.doc)
+    this.doc = Automerge.merge(this.doc, theirs.doc)
+    let afterHeads = Automerge.getHeads(this.doc)
+    // Return the new heads that appeared (as a proxy for opIds)
+    let newHeads = afterHeads.filter(h => !beforeHeads.includes(h))
     if (this.subscriber) this.subscriber(this)
-    return opIds
+    return newHeads
   }
 
   static getActorId(authorId: AuthorId) {
@@ -409,25 +439,30 @@ export class Draft {
   }
 
   static load(id: string, binary: Uint8Array, authorId: AuthorId): Draft {
-    let doc = load(binary, this.getActorId(authorId))
+    let doc = Automerge.load<DraftDoc>(binary, { actor: this.getActorId(authorId) })
     let draft = new Draft(id, doc)
     return draft
   }
 
   static create(message: string, authorId: AuthorId): Draft {
-    let doc = create(this.getActorId(authorId))
     let id = nanoid()
-    doc.put(ROOT, 'message', message)
-    doc.put(ROOT, 'author', authorId)
-    doc.put(ROOT, 'shared', false, 'boolean')
-    doc.put(ROOT, 'pinned', false)
-    doc.put(ROOT, 'parent_id', id)
-    doc.put(ROOT, 'time', Date.now(), 'timestamp')
-    doc.put(ROOT, 'archived', false, 'boolean')
-    doc.put(ROOT, 'title', '')
-    doc.putObject(ROOT, 'comments', {})
-    doc.putObject(ROOT, 'contributors', {})
-    let text = doc.putObject(ROOT, 'text', '')
+    let actorId = this.getActorId(authorId)
+    let doc = Automerge.from<DraftDoc>({
+      text: '',
+      title: '',
+      message,
+      author: authorId,
+      shared: false,
+      pinned: false,
+      parent_id: id,
+      time: Date.now(),
+      archived: false,
+      edited_at: 0,
+      merged_at: false,
+      initialHeads: '',
+      contributors: {},
+      comments: {},
+    } as DraftDoc, { actor: actorId })
     let draft = new Draft(id, doc)
     draft.addContributor(authorId)
     return draft
@@ -435,8 +470,11 @@ export class Draft {
 
   commit(message: string): Heads {
     let meta: ChangeMetadata = { authorId: this.authorId, message }
-    let heads = this.doc.commit(JSON.stringify(meta))
+    this.doc = Automerge.change(this.doc, { message: JSON.stringify(meta) }, _d => {
+      // Empty change body — just creating a commit point with a message
+    })
+    let heads = Automerge.getHeads(this.doc)
     if (this.subscriber) this.subscriber(this)
-    return [heads]
+    return heads
   }
 }

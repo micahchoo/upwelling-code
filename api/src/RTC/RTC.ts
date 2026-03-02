@@ -1,7 +1,6 @@
 import { EventEmitter } from "events";
 import { nanoid } from "nanoid";
-import { SyncState, initSyncState } from "automerge-wasm-pack";
-import { Automerge } from 'automerge-wasm-pack';
+import * as Automerge from '@automerge/automerge';
 import { Author } from "..";
 
 import debug from 'debug'
@@ -28,15 +27,15 @@ export type WebsocketSyncMessage = {
 export default class RTC<T extends WebsocketSyncMessage> extends EventEmitter {
   id: string;
   ws: WebSocket;
-  doc: Automerge;
+  doc: Automerge.Doc<any>;
   author: Author;
   destroyed: boolean = false;
   timeout: any;
   peerId: string = nanoid();
-  peerStates = new Map<string, SyncState>();
+  peerStates = new Map<string, Automerge.SyncState>();
   retries: number = 0;
 
-  constructor(id: string, doc: Automerge, author: Author) {
+  constructor(id: string, doc: Automerge.Doc<any>, author: Author) {
     super()
     this.id = id
     this.doc = doc
@@ -53,12 +52,10 @@ export default class RTC<T extends WebsocketSyncMessage> extends EventEmitter {
     }, sec);
   }
 
-  _getPeerState(peerId: string) {
+  _getPeerState(peerId: string): Automerge.SyncState {
     let state = this.peerStates.get(peerId);
     if (!state) {
-      // This should never happen, we missed an OPEN
-      // but it isn't a fatal error, just re-create it
-      state = initSyncState();
+      state = Automerge.initSyncState();
       this.peerStates.set(peerId, state);
     }
     return state;
@@ -71,8 +68,13 @@ export default class RTC<T extends WebsocketSyncMessage> extends EventEmitter {
       throw new Error("Malformed syncMessage");
     }
     let syncMessage = Uint8Array.from(Buffer.from(msg.message, "base64"));
-    let heads = this.doc.getHeads()
-    let opIds = this.doc.receiveSyncMessage(state, syncMessage);
+    let heads = Automerge.getHeads(this.doc);
+    let [newDoc, newState, _patches] = Automerge.receiveSyncMessage(this.doc, state, syncMessage);
+    this.doc = newDoc;
+    this.peerStates.set(msg.peerId, newState);
+    let newHeads = Automerge.getHeads(this.doc);
+    // Changed heads serve as a proxy for op IDs
+    let opIds = newHeads.filter(h => !heads.includes(h));
     this.emit('syncMessage', { heads, msg, opIds })
     this.sendSyncMessage(msg.peerId);
   }
@@ -88,7 +90,8 @@ export default class RTC<T extends WebsocketSyncMessage> extends EventEmitter {
 
   sendSyncMessage(peerId: string) {
     let state = this._getPeerState(peerId);
-    let syncMessage = this.doc.generateSyncMessage(state);
+    let [newState, syncMessage] = Automerge.generateSyncMessage(this.doc, state);
+    this.peerStates.set(peerId, newState);
     if (!syncMessage) return; // done
     let msg = {
       peerId: this.peerId,
