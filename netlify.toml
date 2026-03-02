@@ -1,0 +1,13 @@
+[build]
+  base = "app"
+  command = "npm run build:api && npm run build"
+  publish = "build"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# SPA fallback: serve index.html for all routes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
