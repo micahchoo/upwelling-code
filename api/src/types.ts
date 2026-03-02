@@ -10,6 +10,7 @@ export type ChangeSet = { add: ChangeSetAddition[]; del: ChangeSetDeletion[] }
 // Automerge document schemas
 
 export interface DraftDoc {
+  [key: string]: unknown
   text: string
   title: string
   message: string
@@ -44,6 +45,7 @@ export interface DraftMetaEntry {
 }
 
 export interface MetadataDoc {
+  [key: string]: unknown
   id: string
   main: string
   drafts: { [key: string]: DraftMetaEntry }
