@@ -1,8 +1,12 @@
 export default class HTTP {
-  BASE: string = 'http://localhost:5001'
+  BASE: string | null = null
 
   constructor(url?: string) {
     if (url) this.BASE = url
+  }
+
+  private get enabled(): boolean {
+    return this.BASE !== null && this.BASE !== ''
   }
 
   async ids(): Promise<string[]> {
@@ -10,6 +14,7 @@ export default class HTTP {
   }
 
   async getItem(id: string, actorId?: string): Promise<ArrayBuffer | null> {
+    if (!this.enabled) return null
     let url = this.getURI(id)
     return new Promise<ArrayBuffer | null>((resolve, reject) => {
       fetch(url)
@@ -28,7 +33,8 @@ export default class HTTP {
     id: string,
     binary: Uint8Array,
     filename?: string
-  ): Promise<Response> {
+  ): Promise<Response | null> {
+    if (!this.enabled) return null
     let form = new FormData()
     form.append(id, new Blob([binary]))
     return fetch(this.getURI(id) + '?filename=' + filename, {
@@ -37,7 +43,8 @@ export default class HTTP {
     })
   }
 
-  async deleteItem(id: string): Promise<Response> {
+  async deleteItem(id: string): Promise<Response | null> {
+    if (!this.enabled) return null
     let binary = ''
     return fetch(this.getURI(id), {
       body: binary,
