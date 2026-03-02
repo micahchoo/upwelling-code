@@ -1,5 +1,5 @@
-import { Draft } from 'api'
-import { ChangeSet } from 'automerge-wasm-pack'
+import { Draft, ChangeSet } from 'api'
+import * as Automerge from '@automerge/automerge'
 import { EditorState, Transaction } from 'prosemirror-state'
 import {
   AddMarkStep,
@@ -26,11 +26,12 @@ function handleReplaceStep(
   let { start, end } = prosemirrorToAutomerge(step, editableDraft, state)
 
   if (end !== start) {
-    let deleted = editableDraft.deleteAt(start, end - start)
+    let deletedText = editableDraft.text.substring(start, end)
+    editableDraft.deleteAt(start, end - start)
     changeSet.del.push({
-      actor: editableDraft.doc.getActorId(),
+      actor: Automerge.getActorId(editableDraft.doc),
       pos: start,
-      val: deleted?.join('') || '',
+      val: deletedText,
     })
   }
 
@@ -39,7 +40,7 @@ function handleReplaceStep(
     step.slice.content.forEach((node, idx) => {
       if (node.type.name === 'text' && node.text) {
         changeSet.add.push({
-          actor: editableDraft.doc.getActorId(),
+          actor: Automerge.getActorId(editableDraft.doc),
           start,
           end: start + node.text.length,
         })
@@ -50,7 +51,7 @@ function handleReplaceStep(
 
         let nodeText = node.textBetween(0, node.content.size)
         changeSet.add.push({
-          actor: editableDraft.doc.getActorId(),
+          actor: Automerge.getActorId(editableDraft.doc),
           start,
           end: start + nodeText.length,
         })
