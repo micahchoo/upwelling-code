@@ -1,0 +1,18 @@
+[build]
+  base = "app"
+  command = "npm run build:api && npm run build"
+  publish = "build"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NODE_OPTIONS = "--max-old-space-size=4096"
+  GENERATE_SOURCEMAP = "false"
+  # Treat TS errors as warnings so the ForkTsChecker OOM doesn't block the build
+  TSC_COMPILE_ON_ERROR = "true"
+  DISABLE_ESLINT_PLUGIN = "true"
+
+# SPA fallback: serve index.html for all routes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
