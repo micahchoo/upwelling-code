@@ -37,6 +37,36 @@ const automergeSlimEntry = path.resolve(
   'dist', 'mjs', 'entrypoints', 'slim.js'
 );
 
+// Force single module instance for prosemirror packages.
+// These packages ship dual CJS/ESM entries via "exports" field. Without aliases,
+// webpack resolves ESM imports to dist/index.js and CJS requires to dist/index.cjs,
+// creating two separate module instances. This breaks instanceof checks (e.g.
+// DecorationSet) between app code (ESM) and use-prosemirror (CJS).
+const prosemirrorViewEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-view', 'dist', 'index.js'
+);
+const prosemirrorStateEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-state', 'dist', 'index.js'
+);
+const prosemirrorModelEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-model', 'dist', 'index.js'
+);
+const prosemirrorTransformEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-transform', 'dist', 'index.js'
+);
+const prosemirrorHistoryEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-history', 'dist', 'index.js'
+);
+const prosemirrorSchemaBasicEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-schema-basic', 'dist', 'index.js'
+);
+const prosemirrorSchemaListEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-schema-list', 'dist', 'index.js'
+);
+const prosemirrorChangesetEntry = path.resolve(
+  paths.appNodeModules, 'prosemirror-changeset', 'dist', 'index.js'
+);
+
 const reactRefreshRuntimeEntry = require.resolve('react-refresh/runtime');
 const reactRefreshWebpackPluginRuntimeEntry = require.resolve(
   '@pmmmwh/react-refresh-webpack-plugin'
@@ -336,6 +366,15 @@ module.exports = function (webpackEnv) {
         'react-native': 'react-native-web',
         // Use base64-embedded WASM to avoid webpack WASM parsing issues
         '@automerge/automerge': automergeSlimEntry,
+        // Force single ESM instance for all dual-entry prosemirror packages
+        'prosemirror-view': prosemirrorViewEntry,
+        'prosemirror-state': prosemirrorStateEntry,
+        'prosemirror-model': prosemirrorModelEntry,
+        'prosemirror-transform': prosemirrorTransformEntry,
+        'prosemirror-history': prosemirrorHistoryEntry,
+        'prosemirror-schema-basic': prosemirrorSchemaBasicEntry,
+        'prosemirror-schema-list': prosemirrorSchemaListEntry,
+        'prosemirror-changeset': prosemirrorChangesetEntry,
         // Allows for better profiling with ReactDevTools
         ...(isEnvProductionProfile && {
           'react-dom$': 'react-dom/profiling',
@@ -357,6 +396,14 @@ module.exports = function (webpackEnv) {
           babelRuntimeEntryHelpers,
           babelRuntimeRegenerator,
           automergeSlimEntry,
+          prosemirrorViewEntry,
+          prosemirrorStateEntry,
+          prosemirrorModelEntry,
+          prosemirrorTransformEntry,
+          prosemirrorHistoryEntry,
+          prosemirrorSchemaBasicEntry,
+          prosemirrorSchemaListEntry,
+          prosemirrorChangesetEntry,
         ])
       ],
       fallback: {
