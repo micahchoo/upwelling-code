@@ -92,7 +92,11 @@ export default function DocumentWrapper(props: DocumentProps) {
           upwell = documents.get(id)
         } catch (err) {
           // get a document from local fs or memory
-          upwell = await documents.open(id)
+          try {
+            upwell = await documents.open(id)
+          } catch (openErr) {
+            log('document not found locally or remotely')
+          }
         }
         if (!unmounted && upwell) {
           log('getting rootDraft in main component')

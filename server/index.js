@@ -10,6 +10,8 @@ expressWs(app)
 app.use(cors())
 app.use(require('skipper')())
 
+app.get('/health', (req, res) => res.status(200).send('ok'))
+
 try {
   fs.mkdirSync(path.join(__dirname, 'data'))
 } catch (err) {
