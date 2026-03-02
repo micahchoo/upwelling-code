@@ -1,116 +1,123 @@
-import * as Automerge from 'automerge-wasm-pack'
+import * as Automerge from '@automerge/automerge'
 import { Draft, Author, AuthorId, DraftMetadata } from '.'
 import colors from './colors'
-
-const ROOT = '_root'
+import { MetadataDoc, AuthorEntry, DraftMetaEntry } from './types'
 
 export class UpwellMetadata {
-  doc: Automerge.Automerge
+  doc: Automerge.Doc<MetadataDoc>
 
-  constructor(doc: Automerge.Automerge) {
+  constructor(doc: Automerge.Doc<MetadataDoc>) {
     if (!doc) throw new Error('doc required')
     this.doc = doc
   }
 
   static load(binary: Uint8Array): UpwellMetadata {
-    return new UpwellMetadata(Automerge.load(binary))
+    return new UpwellMetadata(Automerge.load<MetadataDoc>(binary))
   }
 
   static create(id: string): UpwellMetadata {
-    let doc = Automerge.create()
-    doc.put(ROOT, 'id', id)
-    doc.putObject(ROOT, 'drafts', {})
-    doc.putObject(ROOT, 'history', [])
-    doc.putObject(ROOT, 'authors', [])
+    let doc = Automerge.from<MetadataDoc>({
+      id,
+      main: '',
+      drafts: {},
+      history: [],
+      authors: [],
+    })
     let meta = new UpwellMetadata(doc)
     return meta
   }
 
   isArchived(id: string): boolean {
-    let draft = this.doc.materialize('/drafts/' + id)
-    return draft.archived
+    let draft = this.doc.drafts[id]
+    return draft ? draft.archived : false
   }
 
   archive(id: string) {
-    let draft = this.doc.materialize('/drafts/' + id)
-    this.doc.putObject('/drafts', id, {
-      id: draft.id,
-      heads: draft.heads,
-      initialHeads: draft.initialHeads,
-      archived: true,
+    let draft = this.doc.drafts[id]
+    if (!draft) return
+    this.doc = Automerge.change(this.doc, d => {
+      d.drafts[id] = {
+        id: draft.id,
+        heads: draft.heads ? [...draft.heads] : [],
+        initialHeads: draft.initialHeads ? [...draft.initialHeads] : [],
+        archived: true,
+      } as any
     })
   }
 
   addDraft(draft: Draft) {
     let draftMetadata = draft.materialize()
-    let archived = this.isArchived(draft.id) || false
-    this.doc.putObject('/drafts', draft.id, {
-      id: draft.id,
-      heads: draftMetadata.heads,
-      initialHeads: draftMetadata.initialHeads,
-      archived,
-      shared: draft.shared,
+    let archived = false
+    try {
+      archived = this.isArchived(draft.id)
+    } catch (e) {}
+    this.doc = Automerge.change(this.doc, d => {
+      d.drafts[draft.id] = {
+        id: draft.id,
+        heads: [...draftMetadata.heads],
+        initialHeads: [...draftMetadata.initialHeads],
+        archived,
+        shared: draft.shared,
+      } as any
     })
   }
 
-  getDraft(id: string): {
-    id: string
-    heads: string[]
-    initialHeads: string[]
-    archived: boolean
-  } {
-    return this.doc.materialize('/drafts/' + id)
+  getDraft(id: string): DraftMetaEntry {
+    let draft = this.doc.drafts[id]
+    if (!draft) throw new Error('Draft not found: ' + id)
+    return JSON.parse(JSON.stringify(draft))
   }
 
   addAuthor(author: Author) {
-    let maybe = this.doc.materialize('/authors')
-    if (maybe.findIndex((a) => a.id === author.id) === -1) {
-      author.date = Date.now()
-      let len = this.doc.length('/authors')
-      this.doc.insertObject('/authors', len, author)
-    }
+    let authors = this.doc.authors || []
+    if (authors.findIndex((a: AuthorEntry) => a.id === author.id) !== -1) return
+    this.doc = Automerge.change(this.doc, d => {
+      d.authors.push({ id: author.id, name: author.name, date: Date.now() } as any)
+    })
   }
 
   updateAuthor(id: AuthorId, name: string) {
-    let maybe = this.doc.materialize('/authors')
-    let index = maybe.findIndex((a) => a.id === id)
-    let old = maybe[index]
-    old.name = name
-    this.doc.insertObject('/authors', index, old)
+    let authors = this.doc.authors || []
+    let index = authors.findIndex((a: AuthorEntry) => a.id === id)
+    if (index === -1) return
+    this.doc = Automerge.change(this.doc, d => {
+      d.authors[index].name = name
+    })
   }
 
-  getAuthors() {
-    return this.doc.materialize('/authors')
+  getAuthors(): AuthorEntry[] {
+    return JSON.parse(JSON.stringify(this.doc.authors || []))
   }
 
-  getAuthor(authorId: AuthorId): Author | undefined {
-    return this.doc.materialize('/authors').find((a) => a.id === authorId)
+  getAuthor(authorId: AuthorId): AuthorEntry | undefined {
+    let authors = this.doc.authors || []
+    return authors.find((a: AuthorEntry) => a.id === authorId)
   }
 
   getAuthorColor(authorId: AuthorId): string {
     let authors = this.getAuthors()
-    let index = authors.findIndex((author) => author.id === authorId)
+    let index = authors.findIndex((author: AuthorEntry) => author.id === authorId)
     return colors[Math.max(index % colors.length, 0)]
   }
 
   get id(): string {
-    let value = this.doc.get(ROOT, 'id')
-    if (value) return value[1] as string
-    else return ''
+    return this.doc.id || ''
   }
 
   get main(): string {
-    let value = this.doc.get(ROOT, 'main')
-    if (!value) throw new Error('no main doc')
-    return value[1] as string
+    if (!this.doc.main) throw new Error('no main doc')
+    return this.doc.main
   }
 
   set main(id: string) {
-    this.doc.put(ROOT, 'main', id)
+    this.doc = Automerge.change(this.doc, d => {
+      d.main = id
+    })
   }
 
   addToHistory(id: string) {
-    let len = this.doc.length('/history')
-    this.doc.insert('/history', len, id)
+    this.doc = Automerge.change(this.doc, d => {
+      d.history.push(id as any)
+    })
   }
 }

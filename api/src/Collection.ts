@@ -1,77 +1,73 @@
-import init, {
-  ObjID,
-  Automerge,
-  load,
-  create,
-  Value,
-  SyncMessage,
-  SyncState,
-} from 'automerge-wasm-pack'
+import * as Automerge from '@automerge/automerge'
 import { v4 as uuid } from 'uuid'
-
-const ROOT = '_root'
 
 type CollectionRow = {
   id?: string
 }
 
-type Query = object
-type QueryOptions = object
+// A Collection stores objects in a map field on a Draft's Automerge doc.
+// Since the new Automerge API is immutable, the Collection needs a reference
+// to its parent Draft so it can read/write through the draft's doc.
+export interface CollectionHost {
+  doc: Automerge.Doc<any>
+  updateDoc(doc: Automerge.Doc<any>): void
+}
 
 export class Collection<T extends CollectionRow> {
   name: string
-  doc: Automerge
+  host: CollectionHost
 
-  constructor(doc: Automerge, name: string) {
+  constructor(host: CollectionHost, name: string) {
     this.name = name
-    this.doc = doc
-    try {
-      this._getMap()
-    } catch (err) {
-      this.doc.putObject(ROOT, name, {})
+    this.host = host
+    // Ensure the collection map exists
+    let doc = this.host.doc
+    if (!(doc as any)[name]) {
+      this.host.updateDoc(
+        Automerge.change(doc, d => {
+          ;(d as any)[name] = {}
+        })
+      )
     }
   }
 
-  _getMap(): ObjID {
-    let value = this.doc.get(ROOT, this.name)
-    if (value && value[0] === 'map') {
-      let map = value[1]
-      return map
-    }
-    throw new Error('Collection not initialized.')
+  private _getMap(): { [key: string]: T } {
+    return (this.host.doc as any)[this.name] || {}
   }
 
   objects(): { [key: string]: T } {
-    return this.doc.materialize(this._getMap())
+    let map = this._getMap()
+    // Return a plain JS copy
+    return JSON.parse(JSON.stringify(map))
   }
 
   insert(data: T): string {
     let id = data.id || uuid()
     data.id = id
-    let map = this._getMap()
-    Object.keys(data).forEach((key) => {
-      let value = this.doc.get(map, id)
-      let obj: ObjID
-      if (value && value[0] === 'map') {
-        obj = value[1]
-      } else {
-        obj = this.doc.putObject(map, id, {})
-      }
-
-      if (typeof data[key] === 'object') {
-        this.doc.putObject(obj, key, data[key])
-      } else {
-        this.doc.put(obj, key, data[key])
-      }
-    })
+    this.host.updateDoc(
+      Automerge.change(this.host.doc, d => {
+        let collection = (d as any)[this.name]
+        if (!collection[id]) {
+          collection[id] = {} as any
+        }
+        let obj = collection[id]
+        Object.keys(data).forEach((key) => {
+          if (typeof (data as any)[key] === 'object' && Array.isArray((data as any)[key])) {
+            obj[key] = (data as any)[key].slice()
+          } else {
+            obj[key] = (data as any)[key]
+          }
+        })
+      })
+    )
     return id
   }
 
   get(id: string): T | undefined {
     let map = this._getMap()
-    let value = this.doc.get(map, id)
-    if (value && value[0] === 'map') {
-      return this.doc.materialize(value[1])
+    let value = map[id]
+    if (value) {
+      return JSON.parse(JSON.stringify(value))
     }
     return undefined
   }
@@ -79,7 +75,6 @@ export class Collection<T extends CollectionRow> {
   update(id: string, raw: any) {
     let data = this.get(id)
     if (!data) throw new Error('id doesnt exist')
-    // only update the ones that are different
     return this.insert(Object.assign(data, raw))
   }
 }

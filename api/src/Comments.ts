@@ -1,5 +1,6 @@
+import * as Automerge from '@automerge/automerge'
 import { AuthorId } from './Upwell'
-import { Collection } from './Collection'
+import { Collection, CollectionHost } from './Collection'
 import { nanoid } from 'nanoid'
 
 export type CommentId = string
@@ -20,12 +21,17 @@ export type Comment = {
 
 export class Comments extends Collection<Comment> {
   resolve(comment: Comment) {
-    this.doc.put(`/${this.name}/${comment.id}/`, 'state', CommentState.CLOSED)
+    this.host.updateDoc(
+      Automerge.change(this.host.doc, d => {
+        let c = (d as any)[this.name][comment.id]
+        if (c) c.state = CommentState.CLOSED
+      })
+    )
   }
 
   addChild(message: string, author: AuthorId, parentId: CommentId): Comment {
     const id = nanoid()
-    const child = {
+    const child: Comment = {
       id,
       author,
       message,
@@ -34,9 +40,14 @@ export class Comments extends Collection<Comment> {
       state: CommentState.OPEN,
     }
     this.insert(child)
-    let path = `/${this.name}/${child.parentId}/children`
-    let len = this.doc.length(path)
-    this.doc.insert(path, len, child.id)
+    this.host.updateDoc(
+      Automerge.change(this.host.doc, d => {
+        let parent = (d as any)[this.name][parentId]
+        if (parent && parent.children) {
+          parent.children.push(child.id)
+        }
+      })
+    )
     return child
   }
 }

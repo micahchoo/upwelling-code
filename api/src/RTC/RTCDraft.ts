@@ -1,4 +1,5 @@
-import { ChangeSet } from 'automerge-wasm-pack'
+import * as Automerge from '@automerge/automerge'
+import { ChangeSet, patchesToChangeSet } from '../types'
 import { Author, Draft } from '..'
 import Queue from '../Queue'
 import RTC, { WebsocketSyncMessage } from './RTC'
@@ -27,17 +28,25 @@ export class RealTimeDraft extends RTC<DraftWebsocketMessage> {
     this.draft = draft
     this.author = author
     this.on('syncMessage', ({ heads, msg, opIds }) => {
-      let textObj = this.draft.doc.get('_root', 'text')
+      // Update the draft's doc reference (since RTC.receiveSyncMessage updates this.doc)
+      this.draft.doc = this.doc
       this.draft.subscriber && this.draft.subscriber(this.draft)
-      if (textObj && textObj[0] === 'text' && opIds.indexOf(textObj[1]) > -1) {
-        let newHeads = this.draft.doc.getHeads()
-        let attribution = this.draft.doc.attribute(textObj[1], heads, [
-          newHeads,
-        ])
-        this.transactions.push({
-          author: msg.author,
-          changes: attribution,
-        })
+
+      if (opIds.length > 0) {
+        // Use diff to compute what text changed
+        let newHeads = Automerge.getHeads(this.doc)
+        let patches = Automerge.diff(this.doc, heads, newHeads)
+        let textPatches = patches.filter(p => p.path[0] === 'text')
+
+        if (textPatches.length > 0) {
+          // Use the remote author's ID for attribution
+          let actorId = msg.author?.id || ''
+          let attribution = patchesToChangeSet(textPatches, actorId + '0000')
+          this.transactions.push({
+            author: msg.author,
+            changes: [attribution],
+          })
+        }
       }
 
       if (opIds.length > 0) {

@@ -1,9 +1,9 @@
 import { Decoration, DecorationSet } from 'prosemirror-view'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { Node } from 'prosemirror-model'
-import { Draft, Upwell } from 'api'
+import { Draft, Upwell, ChangeSet } from 'api'
+import * as Automerge from '@automerge/automerge'
 import { automergeToProsemirror } from './utils/PositionMapper'
-import { ChangeSet } from 'automerge-wasm-pack'
 import Documents from '../Documents'
 import { getAuthorHighlight } from '../util'
 
@@ -99,26 +99,24 @@ function getOldChanges(
   doc: Node,
   decorations: DecorationSet
 ) {
-  let obj = editableDraft.doc.get('_root', 'text', heads)
-
-  if (obj && obj[0] === 'text') {
-    if (heads.length > 0) {
-      let history = editableDraft.doc.attribute2(obj[1], heads, [
-        baseDraft.doc.getHeads(),
-      ])
-
-      decorations = getInlineDecorations(
-        history[0],
-        editableDraft,
-        doc,
-        decorations
-      )
-      decorations = getMarginDecorations(
-        history[0],
-        editableDraft,
-        doc,
-        decorations
-      )
+  if (heads.length > 0) {
+    let baseHeads = Automerge.getHeads(baseDraft.doc)
+    let patches = Automerge.diff(editableDraft.doc, heads, baseHeads)
+    let textPatches = patches.filter(p => p.path[0] === 'text')
+    if (textPatches.length > 0) {
+      let actor = Automerge.getActorId(baseDraft.doc)
+      let changeSet: ChangeSet = { add: [], del: [] }
+      for (let patch of textPatches) {
+        if (patch.action === 'splice') {
+          let start = patch.path[1] as number
+          let text = (patch as any).value as string
+          if (text) {
+            changeSet.add.push({ actor, start, end: start + text.length })
+          }
+        }
+      }
+      decorations = getInlineDecorations(changeSet, editableDraft, doc, decorations)
+      decorations = getMarginDecorations(changeSet, editableDraft, doc, decorations)
     }
   }
   return decorations
@@ -130,25 +128,23 @@ function getNewChanges(
   doc: Node,
   decorations: DecorationSet
 ): DecorationSet {
-  let latestObj = editableDraft.doc.get(
-    '_root',
-    'text',
-    baseDraft.doc.getHeads()
-  )
-
-  if (latestObj && latestObj[0] === 'text') {
-    let newHistory = editableDraft.doc.attribute2(
-      latestObj[1],
-      baseDraft.doc.getHeads(),
-      [editableDraft.doc.getHeads()]
-    )
-    let after = getInlineDecorations(
-      newHistory[0],
-      editableDraft,
-      doc,
-      decorations
-    )
-    return after
+  let baseHeads = Automerge.getHeads(baseDraft.doc)
+  let editHeads = Automerge.getHeads(editableDraft.doc)
+  let patches = Automerge.diff(editableDraft.doc, baseHeads, editHeads)
+  let textPatches = patches.filter(p => p.path[0] === 'text')
+  if (textPatches.length > 0) {
+    let actor = Automerge.getActorId(editableDraft.doc)
+    let changeSet: ChangeSet = { add: [], del: [] }
+    for (let patch of textPatches) {
+      if (patch.action === 'splice') {
+        let start = patch.path[1] as number
+        let text = (patch as any).value as string
+        if (text) {
+          changeSet.add.push({ actor, start, end: start + text.length })
+        }
+      }
+    }
+    return getInlineDecorations(changeSet, editableDraft, doc, decorations)
   }
   return decorations
 }

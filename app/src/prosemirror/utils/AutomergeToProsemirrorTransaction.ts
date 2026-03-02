@@ -3,11 +3,7 @@ import { Fragment, Slice } from 'prosemirror-model'
 import { EditorState, Transaction } from 'prosemirror-state'
 import { schema } from '../UpwellSchema'
 import { automergeToProsemirror, BLOCK_MARKER } from './PositionMapper'
-// @okdistribute is there a better way to re-export these, or should we wrap
-// them, or just use them like this?
-import { ChangeSetAddition, ChangeSetDeletion } from 'automerge-wasm-pack'
-
-import { Draft, Transaction as AutomergeTransaction } from 'api'
+import { Draft, Transaction as AutomergeTransaction, ChangeSetAddition, ChangeSetDeletion } from 'api'
 import { automergeChangesKey } from '../AutomergeChangesPlugin'
 
 const convertAddToStep: (

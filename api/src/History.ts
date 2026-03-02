@@ -7,7 +7,8 @@ export default class History {
   constructor(upwell: Upwell) {
     this.upwell = upwell
     // Remove the first document which is the root Draft.
-    this.list = upwell.metadata.doc.materialize('/history').reverse()
+    let history = upwell.metadata.doc.history || []
+    this.list = [...history].reverse()
   }
 
   get length() {

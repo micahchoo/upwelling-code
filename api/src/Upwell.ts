@@ -4,10 +4,11 @@ import crypto from 'crypto'
 import { nanoid } from 'nanoid'
 import { Readable } from 'stream'
 import Debug from 'debug'
+import * as Automerge from '@automerge/automerge'
 import History from './History'
 import { Draft } from './Draft'
 import { UpwellMetadata } from './UpwellMetadata'
-import { ChangeSet } from 'automerge-wasm-pack'
+import { ChangeSet, patchesToChangeSet } from './types'
 import { me } from './colors'
 
 export type AuthorId = string
@@ -88,39 +89,34 @@ export class Upwell {
     ours: Draft,
     ...theirs: Draft[]
   ): { draft: Draft; attribution: ChangeSet[] } {
-    // Fork the comparison draft, because we want to create a copy, not modify
-    // the original. It might make sense to remove this from here and force the
-    // caller to do the fork if this is the behaviour they want in order to
-    // parallel Draft.merge() behaviour.
+    // Fork the comparison draft
     let newDraft = ours.fork('Attribution merge', {
       id: Draft.getActorId(createAuthorId()),
       name: 'fake',
     })
-    let origHead = newDraft.doc.getHeads()
+    let origHead = Automerge.getHeads(newDraft.doc)
 
     // Merge all the passed-in drafts to this one.
     theirs.forEach((draft) => newDraft.merge(draft))
 
-    // Now do a blame against the heads of the comparison drafts.
-    let heads = theirs.map((draft) => draft.doc.getHeads())
+    // Use diff to compute what changed
+    let afterHeads = Automerge.getHeads(newDraft.doc)
+    let patches = Automerge.diff(newDraft.doc, origHead, afterHeads)
 
-    let obj = newDraft.doc.get('_root', 'text')
-    if (!obj || obj[0] !== 'text')
-      throw new Error('Text field not properly initialized')
+    // Convert patches to ChangeSet format for compatibility
+    let actor = theirs.length > 0 ? Automerge.getActorId(theirs[0].doc) : ''
+    let changeSet = patchesToChangeSet(patches, actor)
 
-    let attribution = newDraft.doc.attribute2(obj[1], origHead, heads)
-
-    return { draft: newDraft, attribution }
+    return { draft: newDraft, attribution: [changeSet] }
   }
 
   drafts(): Draft[] {
-    // TODO: get draft list from metadata instead
     return Array.from(this._draftLayers.values()).filter((draft) => {
       return !this.isArchived(draft.id)
     })
   }
 
-  getAuthorColor(authorId): string {
+  getAuthorColor(authorId: string): string {
     if (authorId === this.author.id) return me
     return this.metadata.getAuthorColor(authorId)
   }
@@ -168,7 +164,7 @@ export class Upwell {
     this.metadata.archive(draft.id)
   }
 
-  _coerceDraft(id, buf: Draft | Uint8Array): Draft {
+  _coerceDraft(id: string, buf: Draft | Uint8Array): Draft {
     if (buf?.constructor.name === 'Uint8Array')
       return Draft.load(id, buf as Uint8Array, this.author.id)
     else return buf as Draft
@@ -192,7 +188,6 @@ export class Upwell {
     if (!draft) {
       let buf = this._archivedLayers.get(id)
       if (!buf) throw new Error('mystery id=' + id)
-      // TODO: if draft doesn't exist locally, go fetch it on the server as a last-ditch effort
       return this._coerceDraft(id, buf)
     }
     return draft
@@ -227,7 +222,7 @@ export class Upwell {
       let extract = tar.extract()
       let drafts: MaybeDraft[] = []
 
-      function onentry(header, stream, next) {
+      function onentry(header: any, stream: any, next: any) {
         if (header.name === METADATA_KEY) {
           unpackFileStream(stream, (buf: Buffer) => {
             metadata = buf
@@ -281,11 +276,11 @@ export class Upwell {
 
     writeDraft(this.rootDraft.id, this.rootDraft.save())
 
-    function writeDraft(id, binary: Uint8Array) {
+    function writeDraft(id: string, binary: Uint8Array) {
       pack.entry({ name: `${id}.${LAYER_EXT}` }, Buffer.from(binary))
     }
 
-    pack.entry({ name: METADATA_KEY }, Buffer.from(this.metadata.doc.save()))
+    pack.entry({ name: METADATA_KEY }, Buffer.from(Automerge.save(this.metadata.doc)))
     pack.finalize()
     let end = Date.now() - start
     debug('(serialize): execution time %dms', end)
@@ -294,12 +289,13 @@ export class Upwell {
 
   getChangesFromRoot(draft: Draft): number {
     let start = Date.now()
-    let changes = draft.doc.getChanges(this.rootDraft.doc.getHeads()).length
-    changes = Math.max(changes - 2, 0)
+    let rootHeads = Automerge.getHeads(this.rootDraft.doc)
+    let patches = Automerge.diff(draft.doc, rootHeads, Automerge.getHeads(draft.doc))
+    let changes = Math.max(patches.length, 0)
     this.changes.set(draft.id, changes)
     let end = Date.now() - start
     debug('(getChangesFromRoot): execution time %dms', end)
-    return changes // 2 initial are trash
+    return changes
   }
 
   static create(options?: UpwellOptions): Upwell {
@@ -324,9 +320,9 @@ export class Upwell {
     draftsToMerge.forEach((draft) => {
       try {
         let existing = this.get(draft.id)
-        let heads = existing.doc.getHeads()
+        let heads = Automerge.getHeads(existing.doc)
         let opIds = existing.merge(draft)
-        let newHeads = existing.doc.getHeads()
+        let newHeads = Automerge.getHeads(existing.doc)
         if (opIds.length > 0 || !arrayEquals(heads, newHeads)) {
           somethingChanged = true
         }
@@ -345,10 +341,10 @@ export class Upwell {
     })
 
     //merge metadata
-    let heads = this.metadata.doc.getHeads()
-    let opIds = this.metadata.doc.merge(other.metadata.doc)
-    let newHeads = this.metadata.doc.getHeads()
-    if (opIds.length > 0 || !arrayEquals(heads, newHeads)) {
+    let heads = Automerge.getHeads(this.metadata.doc)
+    this.metadata.doc = Automerge.merge(this.metadata.doc, other.metadata.doc)
+    let newHeads = Automerge.getHeads(this.metadata.doc)
+    if (!arrayEquals(heads, newHeads)) {
       somethingChanged = true
     }
     return somethingChanged
