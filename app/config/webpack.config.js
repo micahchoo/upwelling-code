@@ -31,6 +31,12 @@ const createEnvironmentHash = require('./webpack/persistentCache/createEnvironme
 // Source maps are resource heavy and can cause out of memory issue for large source files.
 const shouldUseSourceMap = process.env.GENERATE_SOURCEMAP !== 'false';
 
+// @automerge/automerge base64 entry (avoids native WASM parsing by webpack)
+const automergeBase64Entry = path.resolve(
+  paths.appNodeModules, '@automerge', 'automerge',
+  'dist', 'mjs', 'entrypoints', 'fullfat_base64.js'
+);
+
 const reactRefreshRuntimeEntry = require.resolve('react-refresh/runtime');
 const reactRefreshWebpackPluginRuntimeEntry = require.resolve(
   '@pmmmwh/react-refresh-webpack-plugin'
@@ -311,6 +317,8 @@ module.exports = function (webpackEnv) {
         // Support React Native Web
         // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
         'react-native': 'react-native-web',
+        // Use base64-embedded WASM to avoid webpack WASM parsing issues
+        '@automerge/automerge': automergeBase64Entry,
         // Allows for better profiling with ReactDevTools
         ...(isEnvProductionProfile && {
           'react-dom$': 'react-dom/profiling',
@@ -331,6 +339,7 @@ module.exports = function (webpackEnv) {
           babelRuntimeEntry,
           babelRuntimeEntryHelpers,
           babelRuntimeRegenerator,
+          automergeBase64Entry,
         ])
       ],
       fallback: {
