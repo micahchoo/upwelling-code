@@ -31,10 +31,10 @@ const createEnvironmentHash = require('./webpack/persistentCache/createEnvironme
 // Source maps are resource heavy and can cause out of memory issue for large source files.
 const shouldUseSourceMap = process.env.GENERATE_SOURCEMAP !== 'false';
 
-// @automerge/automerge base64 entry (avoids native WASM parsing by webpack)
-const automergeBase64Entry = path.resolve(
+// @automerge/automerge slim entry (WASM loaded at runtime from public/)
+const automergeSlimEntry = path.resolve(
   paths.appNodeModules, '@automerge', 'automerge',
-  'dist', 'mjs', 'entrypoints', 'fullfat_base64.js'
+  'dist', 'mjs', 'entrypoints', 'slim.js'
 );
 
 const reactRefreshRuntimeEntry = require.resolve('react-refresh/runtime');
@@ -194,7 +194,7 @@ module.exports = function (webpackEnv) {
 
   return {
     target: ['browserslist'],
-    mode: 'development',
+    mode: isEnvProduction ? 'production' : 'development',
     // Stop compilation early in production
     bail: isEnvProduction,
     devtool: isEnvProduction
@@ -250,6 +250,23 @@ module.exports = function (webpackEnv) {
       level: 'none',
     },
     optimization: {
+      splitChunks: isEnvProduction ? {
+        chunks: 'all',
+        cacheGroups: {
+          automerge: {
+            test: /[\\/]node_modules[\\/]@automerge[\\/]/,
+            name: 'automerge',
+            chunks: 'all',
+            priority: 20,
+          },
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendor',
+            chunks: 'all',
+            priority: 10,
+          },
+        },
+      } : undefined,
       minimize: isEnvProduction,
       minimizer: [
         // This is only used in production mode
@@ -318,7 +335,7 @@ module.exports = function (webpackEnv) {
         // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
         'react-native': 'react-native-web',
         // Use base64-embedded WASM to avoid webpack WASM parsing issues
-        '@automerge/automerge': automergeBase64Entry,
+        '@automerge/automerge': automergeSlimEntry,
         // Allows for better profiling with ReactDevTools
         ...(isEnvProductionProfile && {
           'react-dom$': 'react-dom/profiling',
@@ -339,7 +356,7 @@ module.exports = function (webpackEnv) {
           babelRuntimeEntry,
           babelRuntimeEntryHelpers,
           babelRuntimeRegenerator,
-          automergeBase64Entry,
+          automergeSlimEntry,
         ])
       ],
       fallback: {

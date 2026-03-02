@@ -5,9 +5,13 @@ import { Comments, createAuthorId, CommentState } from '.'
 import { CollectionHost } from './Collection'
 import { DraftDoc, Heads } from './types'
 
-// No-op: the new @automerge/automerge auto-initializes WASM
+// Initialize Automerge WASM from a separate .wasm file (loaded from public/)
+// instead of embedding the 2.6MB binary as base64 in the JS bundle.
 export async function loadForTheFirstTimeLoL() {
-  return Promise.resolve()
+  const { initializeWasm } = await import('@automerge/automerge')
+  const response = await fetch('/automerge.wasm')
+  const wasmBytes = await response.arrayBuffer()
+  await initializeWasm(new Uint8Array(wasmBytes))
 }
 
 export type ChangeMetadata = {
