@@ -1,6 +1,7 @@
 /** @jsxImportSource @emotion/react */
 import { css } from '@emotion/react/macro'
 import React from 'react'
+import * as Automerge from '@automerge/automerge'
 import { ErrorBoundary } from 'react-error-boundary'
 import { Editor } from './Editor'
 import Documents from '../Documents'
@@ -36,9 +37,10 @@ export function EditReviewView(props: Props) {
 
   let backTheBackUp = async () => {
     let draft = upwell.get(props.visible)
-    let changes = draft.doc.getChanges([])
+    let changes = Automerge.getAllChanges(draft.doc)
     let oldIsNewAgain = upwell.createDraft(`${draft.message} (recovered)`)
-    oldIsNewAgain.doc.applyChanges(changes.slice(0, changes.length - 1))
+    let [recoveredDoc] = Automerge.applyChanges(oldIsNewAgain.doc, changes.slice(0, changes.length - 1))
+    oldIsNewAgain.doc = recoveredDoc
     await documents.save(id)
     window.location.href = `/${id}/${oldIsNewAgain.id}`
   }

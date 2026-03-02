@@ -469,7 +469,7 @@ module.exports = function (webpackEnv) {
             // Process any JS outside of the app with Babel.
             // Unlike the application JS, we only compile the standard ES features.
             {
-              test: /\.(js|mjs)$/,
+              test: /\.(js|mjs|cjs)$/,
               exclude: /@babel(?:\/|\\{1,2})runtime/,
               loader: require.resolve('babel-loader'),
               options: {
@@ -596,7 +596,7 @@ module.exports = function (webpackEnv) {
     },
     plugins: [
       new webpack.EnvironmentPlugin({
-        'STORAGE_URL': 'http://localhost:5001'
+        'STORAGE_URL': ''
       }),
       // Generates an `index.html` file with the <script> injected.
       new webpack.ProvidePlugin({

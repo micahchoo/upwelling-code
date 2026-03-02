@@ -71,6 +71,7 @@ export class Documents {
   }
 
   connectUpwell(id: string) {
+    if (!STORAGE_URL) return
     let upwell = this.get(id)
     if (this.rtcUpwell) return
     this.rtcUpwell = new RealTimeUpwell(upwell, this.author)
@@ -81,6 +82,7 @@ export class Documents {
   }
 
   connectDraft(id: string, did: string) {
+    if (!STORAGE_URL) return null
     let upwell = this.get(id)
     let draft = upwell.get(did)
     if (this.rtcDraft) return this.rtcDraft
